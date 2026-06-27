@@ -101,4 +101,4 @@ bot-discord-albion/
 
 ## 👤 Autor
 
-Desenvolvido por **Txaga** — Die Hard Guild • Albion Online
+Desenvolvido por **Teaga**
