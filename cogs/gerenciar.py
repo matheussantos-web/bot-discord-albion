@@ -8,6 +8,14 @@ class GerenciarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def atualizar(self, ctx, view):
+        canal = discord.utils.get(ctx.guild.channels, name=CANAL_DG)
+        msg = await canal.fetch_message(view.msg_id)
+        await msg.edit(embed=montar_embed(
+            view.titulo, view.tier, view.data, view.hora,
+            view.criador_id, view.membros, view.fila, view.vagas_usadas, view.vagas
+        ))
+
     @commands.command()
     async def add(self, ctx, membro: discord.Member = None, *, classe: str = None):
         """Uso: !add @membro CLASSE"""
@@ -23,24 +31,23 @@ class GerenciarCog(commands.Cog):
             classes_disponiveis = ', '.join(view.membros.keys())
             return await ctx.send(f'❌ Classe inválida. Disponíveis: `{classes_disponiveis}`', delete_after=5)
 
-        if view.vagas_usadas >= view.vagas:
-            return await ctx.send('❌ Conteúdo lotado!', delete_after=5)
-
         if membro.id in view.inscritos:
             return await ctx.send(f'❌ {membro.display_name} já está nesse conteúdo.', delete_after=5)
 
-        view.membros[classe].append(membro.id)
-        view.inscritos[membro.id] = classe
-        view.vagas_usadas += 1
+        # Classe já tem alguém — vai pra fila
+        if len(view.membros[classe]) >= 1:
+            view.fila.setdefault(classe, []).append(membro.id)
+            await ctx.send(f'⏳ {membro.display_name} adicionado na fila de **{classe}** (posição {len(view.fila[classe])}).', delete_after=5)
+        else:
+            if view.vagas_usadas >= view.vagas:
+                return await ctx.send('❌ Conteúdo lotado!', delete_after=5)
 
-        canal = discord.utils.get(ctx.guild.channels, name=CANAL_DG)
-        msg = await canal.fetch_message(view.msg_id)
-        await msg.edit(embed=montar_embed(
-            view.titulo, view.tier, view.data, view.hora,
-            view.criador_id, view.membros, view.vagas_usadas, view.vagas
-        ))
+            view.membros[classe].append(membro.id)
+            view.inscritos[membro.id] = classe
+            view.vagas_usadas += 1
+            await ctx.send(f'✅ {membro.display_name} adicionado como **{classe}**.', delete_after=5)
 
-        await ctx.send(f'✅ {membro.display_name} adicionado como **{classe}**.', delete_after=5)
+        await self.atualizar(ctx, view)
 
     @commands.command()
     async def rem(self, ctx, membro: discord.Member = None):
@@ -52,6 +59,14 @@ class GerenciarCog(commands.Cog):
         if not view:
             return await ctx.send('❌ Você não tem conteúdo ativo.', delete_after=5)
 
+        # Remove da fila se tiver
+        for classe, fila in view.fila.items():
+            if membro.id in fila:
+                fila.remove(membro.id)
+                await ctx.send(f'✅ {membro.display_name} removido da fila de **{classe}**.', delete_after=5)
+                await self.atualizar(ctx, view)
+                return
+
         if membro.id not in view.inscritos:
             return await ctx.send('❌ Membro não está nesse conteúdo.', delete_after=5)
 
@@ -59,14 +74,16 @@ class GerenciarCog(commands.Cog):
         view.membros[classe].remove(membro.id)
         view.vagas_usadas -= 1
 
-        canal = discord.utils.get(ctx.guild.channels, name=CANAL_DG)
-        msg = await canal.fetch_message(view.msg_id)
-        await msg.edit(embed=montar_embed(
-            view.titulo, view.tier, view.data, view.hora,
-            view.criador_id, view.membros, view.vagas_usadas, view.vagas
-        ))
+        # Promove próximo da fila
+        if view.fila.get(classe):
+            proximo_id = view.fila[classe].pop(0)
+            view.membros[classe].append(proximo_id)
+            view.inscritos[proximo_id] = classe
+            view.vagas_usadas += 1
+            await ctx.send(f'<@{proximo_id}> saiu da fila e entrou como **{classe}**! ✅', delete_after=30)
 
         await ctx.send(f'✅ {membro.display_name} removido do conteúdo.', delete_after=5)
+        await self.atualizar(ctx, view)
 
     @commands.command()
     async def fechar(self, ctx):
